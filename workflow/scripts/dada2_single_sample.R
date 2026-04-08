@@ -9,9 +9,8 @@
 #   - taxonomy.tsv
 #
 # Notes:
-# - Assumes your cutadapt step already did primer/adaptor removal + basic quality filtering.
-# - This script still performs DADA2 filtering/trimming (recommended) but you can relax/tune params.
-# - Works well as a "workable v0" for interview/demo.
+# - Assumes cutadapt step already did primer/adaptor removal + basic quality filtering.
+# - This script still performs DADA2 filtering/trimming (recommended) 
 
 suppressPackageStartupMessages({
   library(dada2)
