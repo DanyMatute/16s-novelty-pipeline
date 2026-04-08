@@ -68,7 +68,7 @@ rule dada2:
     threads : 1
     conda: "workflow/envs/dada2.yaml"
     params:
-        # keep these simple; you can tune later
+        # keep these simple; can be tuned later
         trunc_len_f=config.get("dada2", {}).get("trunc_len_f", 240),
         trunc_len_r=config.get("dada2", {}).get("trunc_len_r", 200)
     shell:
