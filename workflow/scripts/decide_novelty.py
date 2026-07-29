@@ -57,6 +57,8 @@ def read_taxonomy(tax_path: str) -> list[dict]:
     return rows
 
 def main():
+
+    # 1) Set Up Arguments
     ap = argparse.ArgumentParser()
     ap.add_argument("--sample", required=True)
     ap.add_argument("--manifest", required=True)
@@ -72,51 +74,62 @@ def main():
     ap.add_argument("--novel_genus_label", default="NA")  # placeholder for future
     args = ap.parse_args()
 
+    # 2) Parce Arguments & Get sample type
+    # Manifest
     manifest = read_manifest(args.manifest)
     if args.sample not in manifest:
         raise SystemExit(f"Sample '{args.sample}' not found in manifest: {args.manifest}")
 
+    # Sample type
     sample_type = (manifest[args.sample].get("sample_type") or "test").strip().lower()
 
+    # Denoising Stats
     stats = load_json(args.stats) if os.path.exists(args.stats) else {}
     reads_in = int(stats.get("reads_in", 0) or 0)
     reads_after_filter = int(stats.get("reads_after_filter", 0) or 0)
     reads_nochim = int(stats.get("reads_nochim", 0) or 0)
     num_asvs = int(stats.get("num_asvs", 0) or 0)
 
+    # ASV & Taxonomy
     asvs = read_asv_table(args.asv) if os.path.exists(args.asv) else []
     tax = read_taxonomy(args.tax) if os.path.exists(args.tax) else []
 
-    # Simple “evidence” summaries
+    # 3) Simple “evidence” summaries
+    # Most Aboundant ASVs
     top_asvs = sorted(asvs, key=lambda r: r.get("count", 0), reverse=True)[:5]
     # count genus assignments (ignore blanks)
     genus_calls = [r.get("Genus", "") for r in tax if (r.get("Genus") or "").strip() not in ("", "NA", "NaN")]
     num_genus_assigned = len(genus_calls)
 
-    # ---- Decision logic (workable v0) ----
+    # 4) ---- Decision logic (workable v0) ----
     # Rule 0: If too few reads, can't conclude anything
-    reasons = []
-    call = "INCONCLUSIVE"
+    reasons = [] # collects reasons supporting decisions.
+    call = "INCONCLUSIVE" # Automatically Inconclusive
 
     if sample_type == "negative":
-        # For a negative control, any substantial signal is suspicious.
+        # For a negative control, any substantial signal is suspicious as it should be a blank.
+        # if the number of reads after chimera removal & number of ASV is bigger than the threshold then the negative is not blank
         if reads_nochim >= args.min_reads_nochim and num_asvs >= args.min_asvs:
             call = "INCONCLUSIVE"
             reasons.append("negative_control_has_signal_investigate_contamination")
+        # if the number of reads after chimera removal & number of ASV is smaller than the threshold then the negative is mostly blank, is therefore inconclusive as its novelty cant be classified, but this is expected and hoped for. 
         else:
             call = "INCONCLUSIVE"
             reasons.append("negative_control_low_signal_expected")
     else:
         # Non-negative samples
+        # If the number of reads after chimeral removal is less than the threshold then many reads were amplicon errors caught by dada2.
         if reads_nochim < args.min_reads_nochim:
             call = "INCONCLUSIVE"
             reasons.append("low_reads_after_dada2_nochim")
+        # if number of asc is less than threshold, then we can not be confident that the tanaomic identity was correctly derermined. We need many asv hits to a taxanomic identity. 
         elif num_asvs < args.min_asvs:
             call = "INCONCLUSIVE"
             reasons.append("too_few_asvs_for_confident_taxonomy")
         elif num_genus_assigned == 0:
             call = "POTENTIALLY_NOVEL"
-            reasons.append("no_genus_assignment_from_silva_trainset")
+            reasons.append("no_genus_assignment_from_silva_trainset")\
+        # If there are enough reads_nochim, num_asvs, and a genus was assigned then the sample is known in the db. 
         else:
             call = "KNOWN"
             reasons.append("genus_assigned_using_silva_trainset")

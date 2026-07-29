@@ -39,16 +39,17 @@ option_list <- list(
 
 opt <- parse_args(OptionParser(option_list=option_list))
 
+# Validate Arguments
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
 required <- c("r1","r2","db","out_asv","out_reps","out_stats","out_tax")
+
 missing <- required[!nzchar(sapply(required, function(x) opt[[x]] %||% ""))]
 if (length(missing) > 0) {
   stop(paste0("Missing required args: ", paste(missing, collapse=", ")))
 }
 
 
-
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -78,66 +79,6 @@ infer_sample_id <- function(r1_path) {
 
 sample_id <- infer_sample_id(opt$r1)
 
-# -----------------------------
-# DADA2 pipeline
-# -----------------------------
-# 1) Filter and trim into temp files (keeps this script self-contained)
-tmpdir <- tempfile(paste0("dada2_", sample_id, "_"))
-dir.create(tmpdir, recursive=TRUE, showWarnings=FALSE)
-
-filtF <- file.path(tmpdir, paste0(sample_id, "_filt_F.fastq.gz"))
-filtR <- file.path(tmpdir, paste0(sample_id, "_filt_R.fastq.gz"))
-
-# Filtering
-filt_out <- filterAndTrim(
-  fwd=opt$r1, filt=filtF,
-  rev=opt$r2, filt.rev=filtR,
-  truncLen=c(opt$trunc_len_f, opt$trunc_len_r),
-  maxEE=c(opt$max_ee_f, opt$max_ee_r),
-  truncQ=opt$trunc_q,
-  rm.phix=TRUE,
-  compress=TRUE,
-  multithread=FALSE
-)
-
-reads_in <- as.integer(filt_out[1, "reads.in"])
-reads_out <- as.integer(filt_out[1, "reads.out"])
-
-# If no reads survive, write minimal outputs and exit gracefully
-if (length(missing) > 0) {
-  stop(paste0("Missing required args: ", paste(missing, collapse=", ")))
-}
-
-`%||%` <- function(a, b) if (!is.null(a)) a else b
-
-# -----------------------------
-# Helpers
-# -----------------------------
-ensure_dir <- function(path) {
-  d <- dirname(path)
-  if (!dir.exists(d)) dir.create(d, recursive=TRUE, showWarnings=FALSE)
-}
-
-read_md5 <- function(md5_path) {
-  if (is.null(md5_path) || !file.exists(md5_path)) return(NA_character_)
-  # md5sum output is "hash  filename"
-  line <- readLines(md5_path, warn=FALSE)
-  if (length(line) == 0) return(NA_character_)
-  strsplit(line[1], "\\s+")[[1]][1]
-}
-
-# Try to infer sample_id from filename
-infer_sample_id <- function(r1_path) {
-  base <- basename(r1_path)
-  # common patterns: SAMPLE_R1..., SAMPLE_1..., etc.
-  base <- sub("\\.fastq\\.gz$", "", base)
-  base <- sub("\\.fq\\.gz$", "", base)
-  base <- sub("_R1.*$", "", base)
-  base <- sub("_1.*$", "", base)
-  base
-}
-
-sample_id <- infer_sample_id(opt$r1)
 
 # -----------------------------
 # DADA2 pipeline
@@ -149,16 +90,17 @@ dir.create(tmpdir, recursive=TRUE, showWarnings=FALSE)
 filtF <- file.path(tmpdir, paste0(sample_id, "_filt_F.fastq.gz"))
 filtR <- file.path(tmpdir, paste0(sample_id, "_filt_R.fastq.gz"))
 
-# Filtering
+# Filtering - filters and trims based on user defined criteria
+# Output is a matrix, row = processed sample or file pair, column = reads.in(raw), read.out(processes) & compressed filterd reads fastq. 
 filt_out <- filterAndTrim(
   fwd=opt$r1, filt=filtF,
   rev=opt$r2, filt.rev=filtR,
-  truncLen=c(opt$trunc_len_f, opt$trunc_len_r),
-  maxEE=c(opt$max_ee_f, opt$max_ee_r),
-  truncQ=opt$trunc_q,
-  rm.phix=TRUE,
-  compress=TRUE,
-  multithread=TRUE
+  truncLen=c(opt$trunc_len_f, opt$trunc_len_r), # reads shorter than this are discarted
+  maxEE=c(opt$max_ee_f, opt$max_ee_r), # MaximumExpectedErrors, read with more than the threshold of expected errors will be discarted
+  truncQ=opt$trunc_q, # Truncate reads at the 1st instance the quality is <= Q
+  rm.phix=TRUE, # Removes reads matching to PhiX Bacteriophage
+  compress=TRUE, # Compresses output
+  multithread=FALSE 
 )
 
 reads_in <- as.integer(filt_out[1, "reads.in"])
@@ -198,31 +140,38 @@ if (is.na(reads_out) || reads_out == 0) {
 }
 
 # 2) Learn errors
+# model learns errors by alternating estimation of the error rates and inference of sample composition until they converge on a jointly consistent solution
 errF <- learnErrors(filtF, multithread=TRUE)
 errR <- learnErrors(filtR, multithread=TRUE)
 
 # 3) Dereplicate
+# dereplicating amplicon sequences
 derepF <- derepFastq(filtF)
 derepR <- derepFastq(filtR)
+# names() get or set the name of an Object. Assigns the sample_id to eery read in the derep fastq file
 names(derepF) <- sample_id
 names(derepR) <- sample_id
 
-# 4) DADA inference
+# 4) DADA 
+# inference to correct for Illumina sequenced amplicon errors. Actual Denoising.
 dadaF <- dada(derepF, err=errF, multithread=TRUE)
 dadaR <- dada(derepR, err=errR, multithread=TRUE)
 
 # 5) Merge pairs
+# merge each denoised pair of forward and reverse reads, rejecting any pairs which do not sufficiently overlap or which contain too many mismatches
 mergers <- mergePairs(dadaF, derepF, dadaR, derepR, verbose=FALSE)
 
 # 6) Make sequence table + remove chimeras
+# Creates ASV table
 seqtab <- makeSequenceTable(mergers)
 seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE)
 
 # Track counts (single sample)
-getN <- function(x) sum(getUniques(x))
-dada2_reads_input <- reads_out
-dada2_reads_denoised <- getN(dadaF) # forward uniques count proxy
-dada2_reads_merged <- sum(seqtab)
+getN <- function(x) sum(removeBimeraDenovo(x))
+
+dada2_reads_input <- reads_out # filtered/trimmed reads are dada2 inputs
+dada2_reads_denoised <- getN(dadaF) # forward uniques count proxy, reads left ater denoising, but not rm chimeras and merging
+dada2_reads_merged <- sum(seqtab) 
 reads_nochim <- sum(seqtab.nochim)
 num_asvs <- ncol(seqtab.nochim)
 
@@ -232,12 +181,15 @@ tax <- assignTaxonomy(seqtab.nochim, opt$db, multithread=FALSE)
 # -----------------------------
 # Write outputs
 # -----------------------------
+# Makesure the dada2 pipeline files are exsist
 ensure_dir(opt$out_asv)
 ensure_dir(opt$out_reps)
 ensure_dir(opt$out_stats)
 ensure_dir(opt$out_tax)
 
+# 1) Make ASV Table
 # ASV IDs: stable names derived from sequence hashes (short)
+# Sets up column (seq) and rows (asv_ids) of ASV table
 seqs <- colnames(seqtab.nochim)
 asv_ids <- paste0("ASV", seq_along(seqs))
 
@@ -252,11 +204,11 @@ asv_table <- data.frame(
 )
 write.table(asv_table, file=opt$out_asv, sep="\t", quote=FALSE, row.names=FALSE)
 
-# Representative sequences FASTA
+# 2) Make representative sequences FASTA
 fasta_lines <- c(rbind(paste0(">", asv_ids), seqs))
 writeLines(fasta_lines, con=opt$out_reps)
 
-# Taxonomy TSV
+# 3) Taxonomy TSV
 # tax is a matrix with columns (Kingdom..Genus depending)
 tax_mat <- as.matrix(tax)
 # Ensure columns exist
@@ -266,6 +218,7 @@ for (cname in wanted_cols) {
     tax_mat <- cbind(tax_mat, setNames(matrix(NA_character_, nrow=nrow(tax_mat), ncol=1), cname))
   }
 }
+# make dataframe
 tax_out <- data.frame(
   asv_id=asv_ids,
   tax_mat[, wanted_cols, drop=FALSE],

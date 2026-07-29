@@ -16,24 +16,30 @@ READ1 = {}
 READ2 = {}
 SAMPLE_TYPE = {}
 
+# Read Manifest
 with open(manifest) as f:
     reader = csv.DictReader(f, delimiter="\t")
     for row in reader:
         sample = row["sample"]
+        # Make a list of samples
         SAMPLES.append(sample)
+        # Make disctionary of read 1, read 2 & sample_type. Sample as key. 
         READ1[sample] = row["read1"]
         READ2[sample] = row["read2"]
         SAMPLE_TYPE[sample] = row.get("sample_type", "test")
 
+# Define the final target of entire pipeline
+# Snakemake starts with first rule, as we placed this at the top, the inputs of this rule are the final objectves.
 rule all:
     input:
         expand("results/{sample}/call.json", sample=SAMPLES), # final decision artifact for a sample
-        expand("results/{sample}/metrics.tsv", sample=SAMPLES) #monitoring / QA / dashboard-friendly table
+        expand("results/{sample}/metrics.tsv", sample=SAMPLES) # monitoring / QA / dashboard-friendly table
 
 ## Step 1 : Raw read QC & Controls
 
 rule S1_trim_filter:
     input:
+        # lamdba dynamically changes the sample, to get the value in the read dictionaries
         r1=lambda wc: READ1[wc.sample],
         r2=lambda wc: READ2[wc.sample]
     output:
@@ -53,11 +59,14 @@ rule S1_trim_filter:
 
 ## Step 2 : Denoising / ASV inference + Taxonomic assignment
 rule dada2:
+    # why do we not need to use lambda to dynamically change the sample? 
+    # how does dada2 work? how does it denoise?
     input:
         r1="results/{sample}/clean/{sample}_R1.fastq.gz",
         r2="results/{sample}/clean/{sample}_R2.fastq.gz",
         db="resources/db/silva_nr99_v138.2_toGenus_trainset.fa.gz",
         db_md5="resources/db/silva_nr99_v138.2_toGenus_trainset.fa.gz.md5"
+
     output:
         asv="results/{sample}/asv/asv_table.tsv",
         reps="results/{sample}/asv/rep_seqs.fasta",
