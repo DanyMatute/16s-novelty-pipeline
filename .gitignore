@@ -24,3 +24,9 @@ __pycache__/
 .Rhistory
 .RData
 .DS_Store
+
+# Local debugging outputs
+debug_runs/
+
+# Local command history
+cli_history/

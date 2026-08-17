@@ -36,6 +36,14 @@ rule all:
         expand("results/{sample}/metrics.tsv", sample=SAMPLES) # monitoring / QA / dashboard-friendly table
 
 ## Step 1 : Raw read QC & Controls
+for sample in SAMPLES:
+    print(
+        sample,
+        repr(READ1.get(sample)),
+        type(READ1.get(sample)),
+        repr(READ2.get(sample)),
+        type(READ2.get(sample)),
+    )
 
 rule S1_trim_filter:
     input:
@@ -64,8 +72,8 @@ rule dada2:
     input:
         r1="results/{sample}/clean/{sample}_R1.fastq.gz",
         r2="results/{sample}/clean/{sample}_R2.fastq.gz",
-        db="resources/db/silva_nr99_v138.2_toGenus_trainset.fa.gz",
-        db_md5="resources/db/silva_nr99_v138.2_toGenus_trainset.fa.gz.md5"
+        db="resources/old_db/silva_nr_v123_train_set_noEuk.fa.gz",
+        db_md5="resources/old_db/silva_nr_v123_train_set_noEuk.fa.gz.md5"
 
     output:
         asv="results/{sample}/asv/asv_table.tsv",
@@ -93,9 +101,9 @@ rule dada2:
 
 rule db_checksum:
     input:
-        "resources/db/silva_nr99_v138.2_toGenus_trainset.fa.gz"
+        "resources/old_db/silva_nr_v123_train_set_noEuk.fa.gz"
     output:
-        "resources/db/silva_nr99_v138.2_toGenus_trainset.fa.gz"
+        "resources/old_db/silva_nr_v123_train_set_noEuk.fa.gz"
     shell:
         "md5sum {input} > {output}"
 
