@@ -92,10 +92,16 @@ rule dada2:
         r"""
         mkdir -p $(dirname {output.asv}) $(dirname {output.tax}) $(dirname {log})
         Rscript workflow/scripts/dada2_single_sample.R \
-          --r1 {input.r1} --r2 {input.r2} \
-          --db {input.db} --db_md5 {input.db_md5} \
-          --trunc_len_f {params.trunc_len_f} --trunc_len_r {params.trunc_len_r} \
-          --out_asv {output.asv} --out_reps {output.reps} --out_stats {output.stats} --out_tax {output.tax} \
+          --r1 {input.r1} \
+          --r2 {input.r2} \
+          --db {input.db} \
+          --db_md5 {input.db_md5} \
+          --trunc_len_f {params.trunc_len_f} \
+          --trunc_len_r {params.trunc_len_r} \
+          --out_asv {output.asv} \
+          --out_reps {output.reps} \
+          --out_stats {output.stats} \
+          --out_tax {output.tax} \
           > {log} 2>&1
         """
 
