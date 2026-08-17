@@ -17,42 +17,54 @@ suppressPackageStartupMessages({
   library(jsonlite)
   library(optparse)
 })
-
 # -----------------------------
-# CLI arguments
+# STATS
 # -----------------------------
-option_list <- list(
-  make_option(c("--r1"), type="character", help="Path to R1 FASTQ.gz", metavar="FILE"),
-  make_option(c("--r2"), type="character", help="Path to R2 FASTQ.gz", metavar="FILE"),
-  make_option(c("--db"), type="character", help="Path to SILVA trainset .fa.gz", metavar="FILE"),
-  make_option(c("--db_md5"), type="character", help="Path to db md5 file (optional)", metavar="FILE"),
-  make_option(c("--trunc_len_f"), type="integer", default=240, help="Truncate length forward [default %default]"),
-  make_option(c("--trunc_len_r"), type="integer", default=160, help="Truncate length reverse [default %default]"),
-  make_option(c("--max_ee_f"), type="double", default=2, help="Max expected errors forward [default %default]"),
-  make_option(c("--max_ee_r"), type="double", default=2, help="Max expected errors reverse [default %default]"),
-  make_option(c("--trunc_q"), type="integer", default=2, help="Truncate at quality <= truncQ [default %default]"),
-  make_option(c("--out_asv"), type="character", help="Output ASV table TSV", metavar="FILE"),
-  make_option(c("--out_reps"), type="character", help="Output representative sequences FASTA", metavar="FILE"),
-  make_option(c("--out_stats"), type="character", help="Output denoise stats JSON", metavar="FILE"),
-  make_option(c("--out_tax"), type="character", help="Output taxonomy TSV", metavar="FILE")
-)
 
-opt <- parse_args(OptionParser(option_list=option_list))
+stats <- list(
+  sample_id=NULL,
+  dada2_pipeline = "INCOMPLETE",
+  fail_reason = NULL, 
+  opt = NULL,
 
-# Validate Arguments
-`%||%` <- function(a, b) if (!is.null(a)) a else b
+  step_filt_trim = NULL,
+  reads_in=NULL,
+  reads_after_filter=NULL,
 
-required <- c("r1","r2","db","out_asv","out_reps","out_stats","out_tax")
+  step_dada2 = NULL, 
+  dada2_reads_input=NULL,
+  dada2_reads_denoised = NULL,
+  dada2_reads_merged= NULL,
 
-missing <- required[!nzchar(sapply(required, function(x) opt[[x]] %||% ""))]
-if (length(missing) > 0) {
-  stop(paste0("Missing required args: ", paste(missing, collapse=", ")))
-}
+  step_asv =NULL, 
+  reads_nochim = NULL,
+  num_asvs = NULL,
 
+  params=list(
+    trunc_len_f=NULL,
+    trunc_len_r=NULL,
+    max_ee_f=NULL,
+    max_ee_r=NULL,
+    trunc_q=NULL
+  ),
+
+  tools=list(
+    dada2_version=as.character(packageVersion("dada2")),
+    r_version=R.version.string
+  ),
+
+  db=list(
+    name="SILVA", 
+    version = "v123",
+    trainset=NULL,
+    md5=NULL
+
+))
 
 # -----------------------------
 # Helpers
 # -----------------------------
+
 ensure_dir <- function(path) {
   d <- dirname(path)
   if (!dir.exists(d)) dir.create(d, recursive=TRUE, showWarnings=FALSE)
@@ -77,8 +89,108 @@ infer_sample_id <- function(r1_path) {
   base
 }
 
-sample_id <- infer_sample_id(opt$r1)
+graceful_exit <- function(
+  stats
+  ){
+    # Ensure dir exsist.
+    ensure_dir(stats$opt$out_asv); 
+    ensure_dir(stats$opt$out_reps); 
+    ensure_dir(stats$opt$out_stats); 
+    ensure_dir(stats$opt$out_tax)
 
+    # Empty ASV table
+    empty_asv <- data.frame(
+      asv_id = character(),
+      sequence = character(),
+      count = integer()
+      )
+
+    write.table(
+      empty_asv,
+      file = stats$opt$out_asv,
+      sep = "\t",
+      quote = FALSE,
+      row.names = FALSE
+    )
+
+    # Empty FASTA
+    writeLines(character(), con=stats$opt$out_reps)
+
+    # Empty taxonomy table
+    tax_df <- data.frame(
+      asv_id=character(),
+      Kingdom=character(), 
+      Phylum=character(), 
+      Class=character(), 
+      Order=character(),
+      Family=character(), 
+      Genus=character()
+    )
+
+    write.table(
+      tax_df, 
+      file=stats$opt$out_tax, 
+      sep="\t", 
+      quote=FALSE, 
+      row.names=FALSE
+      )
+
+    write_json(stats, stats$opt$out_stats, pretty=TRUE, auto_unbox=TRUE)
+    quit(save="no", status=0)
+}
+
+# -----------------------------
+# CLI arguments
+# -----------------------------
+option_list <- list(
+  make_option(c("--r1"), type="character", help="Path to R1 FASTQ.gz", metavar="FILE"),
+  make_option(c("--r2"), type="character", help="Path to R2 FASTQ.gz", metavar="FILE"),
+  make_option(c("--db"), type="character", help="Path to SILVA trainset .fa.gz", metavar="FILE"),
+  make_option(c("--db_md5"), type="character", help="Path to db md5 file (optional)", metavar="FILE"),
+  make_option(c("--trunc_len_f"), type="integer", default=240, help="Truncate length forward [default %default]"),
+  make_option(c("--trunc_len_r"), type="integer", default=160, help="Truncate length reverse [default %default]"),
+  make_option(c("--max_ee_f"), type="double", default=2, help="Max expected errors forward [default %default]"),
+  make_option(c("--max_ee_r"), type="double", default=2, help="Max expected errors reverse [default %default]"),
+  make_option(c("--trunc_q"), type="integer", default=2, help="Truncate at quality <= truncQ [default %default]"),
+  make_option(c("--out_asv"), type="character", help="Output ASV table TSV", metavar="FILE"),
+  make_option(c("--out_reps"), type="character", help="Output representative sequences FASTA", metavar="FILE"),
+  make_option(c("--out_stats"), type="character", help="Output denoise stats JSON", metavar="FILE"),
+  make_option(c("--out_tax"), type="character", help="Output taxonomy TSV", metavar="FILE")
+)
+
+opt <- parse_args(OptionParser(option_list = option_list))
+
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+
+required <- c(
+  "r1", "r2", "db",
+  "out_asv", "out_reps", "out_stats", "out_tax"
+)
+
+missing <- required[
+  !nzchar(sapply(required, function(x) opt[[x]] %||% ""))
+]
+
+if (length(missing) > 0L) {
+  stop(
+    "Missing required arguments: ",
+    paste(missing, collapse = ", ")
+  )
+}
+
+stats$opt <- opt
+
+stats$params$trunc_len_f=opt$trunc_len_f
+stats$params$trunc_len_r=opt$trunc_len_r
+stats$params$max_ee_f=opt$max_ee_f
+stats$params$max_ee_r=opt$max_ee_r
+stats$params$trunc_q=opt$trunc_q
+
+stats$db$trainset=opt$db
+stats$db$md5=read_md5(opt$db_md5)
+
+sample_id <- infer_sample_id(opt$r1)
+stats$sample_id <- infer_sample_id(opt$r1)
 
 # -----------------------------
 # DADA2 pipeline
@@ -106,37 +218,16 @@ filt_out <- filterAndTrim(
 reads_in <- as.integer(filt_out[1, "reads.in"])
 reads_out <- as.integer(filt_out[1, "reads.out"])
 
+stats$reads_in <- reads_in
+stats$reads_after_filter <- reads_out
+
 # If no reads survive, write minimal outputs and exit gracefully
 if (is.na(reads_out) || reads_out == 0) {
-  ensure_dir(opt$out_asv); ensure_dir(opt$out_reps); ensure_dir(opt$out_stats); ensure_dir(opt$out_tax)
-
-  # Empty ASV table
-  write.table(data.frame(), file=opt$out_asv, sep="\t", quote=FALSE, row.names=FALSE, col.names=TRUE)
-
-  # Empty FASTA
-  writeLines(character(), con=opt$out_reps)
-
-  # Empty taxonomy table
-  tax_df <- data.frame(
-    asv_id=character(),
-    Kingdom=character(), Phylum=character(), Class=character(), Order=character(),
-    Family=character(), Genus=character()
-  )
-  write.table(tax_df, file=opt$out_tax, sep="\t", quote=FALSE, row.names=FALSE)
-
-  stats <- list(
-    sample_id=sample_id,
-    reads_in=reads_in,
-    reads_after_filter=reads_out,
-    dada2_reads_input=reads_out,
-    dada2_reads_merged=0,
-    reads_nochim=0,
-    num_asvs=0,
-    db=list(name="SILVA", trainset=opt$db, md5=read_md5(opt$db_md5)),
-    note="No reads after filtering; outputs are empty."
-  )
-  write_json(stats, opt$out_stats, pretty=TRUE, auto_unbox=TRUE)
-  quit(save="no", status=0)
+  stats$step_filt_trim <- "FAIL"
+  stats$fail_reason <- "No reads after filtering; outputs are empty."
+  graceful_exit(stats=stats)
+} else {
+  stats$step_filt_trim <- "PASS"
 }
 
 # 2) Learn errors
@@ -148,9 +239,6 @@ errR <- learnErrors(filtR, multithread=TRUE)
 # dereplicating amplicon sequences
 derepF <- derepFastq(filtF)
 derepR <- derepFastq(filtR)
-# names() get or set the name of an Object. Assigns the sample_id to eery read in the derep fastq file
-names(derepF) <- sample_id
-names(derepR) <- sample_id
 
 # 4) DADA 
 # inference to correct for Illumina sequenced amplicon errors. Actual Denoising.
@@ -159,21 +247,43 @@ dadaR <- dada(derepR, err=errR, multithread=TRUE)
 
 # 5) Merge pairs
 # merge each denoised pair of forward and reverse reads, rejecting any pairs which do not sufficiently overlap or which contain too many mismatches
-mergers <- mergePairs(dadaF, derepF, dadaR, derepR, verbose=FALSE)
+mergers <- mergePairs(
+    dadaF, derepF, dadaR, derepR, verbose = FALSE)
+
+# Track counts (single sample)
+getN <- function(x) sum(getUniques(x))
+
+stats$dada2_reads_input <- reads_out
+stats$dada2_reads_denoised <- getN(dadaF)
+stats$dada2_reads_merged <- sum(mergers$abundance)
+stats$num_merged_variants <- nrow(mergers)
+
+
+if (nrow(mergers) == 0L) {
+  stats$step_dada2 <- "FAIL"
+  stats$fail_reason <-"No forward and reverse reads could be merged."
+  graceful_exit ( stats=stats  )
+} else {
+  stats$step_dada2 <- "PASS"
+}
+
 
 # 6) Make sequence table + remove chimeras
 # Creates ASV table
 seqtab <- makeSequenceTable(mergers)
 seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE)
 
-# Track counts (single sample)
-getN <- function(x) sum(removeBimeraDenovo(x))
+stats$reads_nochim <- sum(seqtab.nochim)
+stats$num_asvs <- ncol(seqtab.nochim)
 
-dada2_reads_input <- reads_out # filtered/trimmed reads are dada2 inputs
-dada2_reads_denoised <- getN(dadaF) # forward uniques count proxy, reads left ater denoising, but not rm chimeras and merging
-dada2_reads_merged <- sum(seqtab) 
-reads_nochim <- sum(seqtab.nochim)
-num_asvs <- ncol(seqtab.nochim)
+if (stats$num_asvs == 0L) {
+  stats$step_asv <- "FAIL"
+  stats$fail_reason <- "No asvs after chimera removal."
+  graceful_exit(stats)
+} else {
+  stats$step_asv <- "PASS"
+}
+
 
 # 7) Taxonomy assignment (to genus using SILVA trainset)
 tax <- assignTaxonomy(seqtab.nochim, opt$db, multithread=FALSE)
@@ -226,33 +336,14 @@ tax_out <- data.frame(
 )
 write.table(tax_out, file=opt$out_tax, sep="\t", quote=FALSE, row.names=FALSE)
 
-# Stats JSON (provenance-ish)
-stats <- list(
-  sample_id=sample_id,
-  reads_in=reads_in,
-  reads_after_filter=reads_out,
-  dada2_reads_input=dada2_reads_input,
-  dada2_reads_merged=dada2_reads_merged,
-  reads_nochim=reads_nochim,
-  num_asvs=num_asvs,
-  params=list(
-    trunc_len_f=opt$trunc_len_f,
-    trunc_len_r=opt$trunc_len_r,
-    max_ee_f=opt$max_ee_f,
-    max_ee_r=opt$max_ee_r,
-    trunc_q=opt$trunc_q
-  ),
-  tools=list(
-    dada2_version=as.character(packageVersion("dada2")),
-    r_version=R.version.string
-  ),
-  db=list(
-    name="SILVA",
-    version="v138.2_toGenus_trainset",
-    trainset=opt$db,
-    md5=read_md5(opt$db_md5)
-  )
-)
+stats$dada2_pipeline <- "COMPLETE"
 write_json(stats, opt$out_stats, pretty=TRUE, auto_unbox=TRUE)
 
-message("Done. Sample: ", sample_id, " | ASVs: ", num_asvs, " | reads_nochim: ", reads_nochim)
+message(
+  "Done. Sample: ",
+  stats$sample_id,
+  " | ASVs: ",
+  stats$num_asvs,
+  " | reads_nochim: ",
+  stats$reads_nochim
+)
