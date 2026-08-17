@@ -1,4 +1,4 @@
 db:
   name: "SILVA"
-  version: "v123"
-  trainset: "resources/old_db/silva_nr_v123_train_set_noEuk.fa.gz"
+  version: "v138.3"
+  trainset: "resources/db/silva_nr99_v138.2_toGenus_trainset.fa.gz"

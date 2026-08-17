@@ -55,7 +55,7 @@ stats <- list(
 
   db=list(
     name="SILVA", 
-    version = "v123",
+    version = "v138.2",
     trainset=NULL,
     md5=NULL
 
